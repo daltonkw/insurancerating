@@ -317,6 +317,153 @@ testthat::test_that("multipliers work after add_relativities", {
   )
 })
 
+testthat::test_that("splits replace preceding multiplier offsets exactly once", {
+  fixture <- multiplier_fixture()
+  fixture$data$detail <- c("A1", "A2", "A2", "B1", "B1", "B2")
+  split <- relativities(split_level("B", c(B1 = 0.9, B2 = 1.1)))
+  original <- tariff_relativity(fixture$model, "risk_class", "B")
+
+  for (vector_input in c(TRUE, FALSE)) {
+    for (normalize in c(TRUE, FALSE)) {
+      refinement <- prepare_refinement(fixture$model, fixture$data)
+      if (vector_input) {
+        refinement <- add_restriction(
+          refinement, c(B = 1.15), model_variable = "risk_class",
+          restriction_type = "multiplier"
+        )
+      } else {
+        refinement <- add_restriction(
+          refinement, data.frame(risk_class = "B", multiplier = 1.15),
+          restriction_type = "multiplier"
+        )
+      }
+      multiplier_column <- refinement$steps[[1]]$execution_column
+      refinement <- add_relativities(
+        refinement, "risk_class", "detail", split, "exposure",
+        normalize = normalize
+      )
+
+      testthat::expect_warning(preview <- preview_refinement(refinement, 2), NA)
+      testthat::expect_warning(fitted <- refit(refinement), NA)
+      testthat::expect_false(
+        multiplier_column %in% all.vars(stats::formula(fitted))
+      )
+      testthat::expect_setequal(
+        all.vars(stats::formula(fitted)),
+        c("claims", "risk_class_rel", "exposure")
+      )
+
+      split_values <- c(B1 = 0.9, B2 = 1.1)
+      if (normalize) {
+        split_values <- split_values / stats::weighted.mean(
+          split_values, c(20, 10)
+        )
+      }
+      expected <- c(A = 1, original * 1.15 * split_values)
+      actual <- rating_table(fitted, exposure = FALSE)$df
+      actual <- actual[actual$risk_factor != "(Intercept)", ]
+      testthat::expect_identical(nrow(actual), 3L)
+      testthat::expect_setequal(actual$risk_factor, "risk_class_refined")
+      testthat::expect_equal(
+        actual[[3]], unname(expected[actual$level])
+      )
+
+      row_levels <- ifelse(fixture$data$risk_class == "A", "A",
+                           fixture$data$detail)
+      expected_effect <- unname(expected[row_levels])
+      testthat::expect_equal(preview$state$data$risk_class_rel, expected_effect)
+      expected_count <- fixture$data$exposure * expected_effect
+      expected_count <- expected_count *
+        sum(fixture$data$claims) / sum(expected_count)
+      testthat::expect_equal(unname(stats::fitted(fitted)), expected_count)
+      testthat::expect_warning(
+        ggplot2::ggplot_build(ggplot2::autoplot(refinement, step = 2)), NA
+      )
+    }
+  }
+})
+
+testthat::test_that("splits use current coefficients after fixed and multiplier steps", {
+  fixture <- multiplier_fixture()
+  fixture$data$detail <- c("A1", "A2", "A2", "B1", "B1", "B2")
+  split <- relativities(split_level("B", c(B1 = 0.9, B2 = 1.1)))
+
+  for (variable in c("risk_class", "risk_class_restricted")) {
+    refinement <- prepare_refinement(fixture$model, fixture$data) |>
+      add_restriction(c(A = 1.2, B = 0.8), model_variable = "risk_class") |>
+      add_restriction(
+        c(B = 1.1), model_variable = "risk_class",
+        restriction_type = "multiplier"
+      ) |>
+      add_relativities(
+        variable, "detail", split, "exposure", normalize = FALSE,
+        output_variable = "tariff_segment"
+      )
+
+    testthat::expect_warning(fitted <- refit(refinement), NA)
+    testthat::expect_setequal(
+      all.vars(stats::formula(fitted)),
+      c("claims", "risk_class_rel", "exposure")
+    )
+    actual <- rating_table(fitted, exposure = FALSE)$df
+    actual <- actual[actual$risk_factor != "(Intercept)", ]
+    expected <- c(A = 1.2, B1 = 0.8 * 1.1 * 0.9, B2 = 0.8 * 1.1 * 1.1)
+    testthat::expect_identical(nrow(actual), 3L)
+    testthat::expect_setequal(actual$risk_factor, "tariff_segment")
+    testthat::expect_equal(actual[[3]], unname(expected[actual$level]))
+  }
+})
+
+testthat::test_that("splits consume cumulative multipliers and preserve other offsets", {
+  fixture <- multiplier_fixture()
+  fixture$data$detail <- c("A1", "A2", "A2", "B1", "B1", "B2")
+  fixture$data$period <- rep(c("short", "long", "short"), 2)
+
+  refinement <- prepare_refinement(fixture$model, fixture$data) |>
+    add_restriction(
+      c(short = 0.9, long = 1.1), model_variable = "period",
+      allow_new_risk_factors = TRUE
+    ) |>
+    add_restriction(
+      c(B = 1.15), model_variable = "risk_class",
+      restriction_type = "multiplier"
+    ) |>
+    add_restriction(
+      c(B = 0.95), model_variable = "risk_class",
+      restriction_type = "multiplier"
+    ) |>
+    add_relativities(
+      "risk_class", "detail",
+      relativities(split_level("B", c(B1 = 0.9, B2 = 1.1))),
+      "exposure", normalize = FALSE
+    )
+
+  # Adding another multiplier executes the preceding steps for validation.
+  testthat::expect_warning(
+    refinement <- add_restriction(
+      refinement, c(B1 = 1.02), model_variable = "risk_class_refined",
+      restriction_type = "multiplier"
+    ), NA
+  )
+  testthat::expect_warning(fitted <- refit(refinement), NA)
+  original <- tariff_relativity(fixture$model, "risk_class", "B")
+  expected <- c(A = 1, B1 = original * 1.15 * 0.95 * 0.9 * 1.02,
+                B2 = original * 1.15 * 0.95 * 1.1)
+  actual <- rating_table(fitted, exposure = FALSE)$df
+  testthat::expect_setequal(
+    setdiff(actual$risk_factor, "(Intercept)"),
+    c("period_restricted", "risk_class_refined")
+  )
+  sector <- actual[actual$risk_factor == "risk_class_refined", ]
+  testthat::expect_identical(nrow(sector), 3L)
+  testthat::expect_equal(sector[[3]], unname(expected[sector$level]))
+  period <- c(short = 0.9, long = 1.1)[fixture$data$period]
+  row_levels <- ifelse(fixture$data$risk_class == "A", "A", fixture$data$detail)
+  expected_count <- unname(expected[row_levels] * period * fixture$data$exposure)
+  expected_count <- expected_count * sum(fixture$data$claims) / sum(expected_count)
+  testthat::expect_equal(unname(stats::fitted(fitted)), expected_count)
+})
+
 testthat::test_that("multiplier validation is explicit", {
   fixture <- multiplier_fixture()
   refinement <- prepare_refinement(fixture$model, fixture$data)

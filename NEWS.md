@@ -1,5 +1,10 @@
 # insurancerating (development version)
 
+- `add_relativities()` now correctly replaces the active offset from a
+  preceding multiplier restriction on the same model variable. The adjusted
+  parent effect is included exactly once in the split, preventing spurious
+  missing-model-term warnings, double counting in predictions and duplicate
+  intermediate factors in `rating_table()`.
 - `add_restriction()` now supports relative tariff adjustments through
   `restriction_type = "multiplier"`. Multipliers are stored as ordered
   refinement decisions and are applied to the relativity available at that

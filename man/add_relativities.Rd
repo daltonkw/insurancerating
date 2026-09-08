@@ -103,6 +103,13 @@ relativity step. Once the restricted coefficients have been used to derive
 the final split, \code{\link[=rating_table]{rating_table()}} reports \code{output_variable} as the tariff
 factor and does not also show the intermediate restricted variable.
 
+This also applies to \code{restriction_type = "multiplier"}: a multiplier on a
+parent level is included once in the coefficient from which its sublevels
+are derived. The split replaces the preceding restricted effect in the
+model offset. For example, a parent relativity of 0.80, multiplied by 1.15
+and split with an unnormalised sublevel relativity of 0.90, gives
+\code{0.80 * 1.15 * 0.90}.
+
 Conversely, \code{\link[=add_restriction]{add_restriction()}} can be called after \code{add_relativities()} to
 adjust selected levels of the derived \code{output_variable}. The output variable
 is then recognised as an existing refinement factor; users do not need to

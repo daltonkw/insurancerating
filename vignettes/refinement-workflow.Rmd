@@ -637,7 +637,7 @@ supplied relativities are applied directly.
 This operation is not equivalent to restriction or smoothing:
 
 - smoothing regularises an ordered effect already represented by the model;
-- restriction fixes selected tariff values;
+- restriction fixes or multiplies selected tariff values;
 - shrinkage reduces differences between categorical levels while retaining
   their ordering;
 - additional relativities introduce finer differentiation inside a broader
@@ -646,7 +646,9 @@ This operation is not equivalent to restriction or smoothing:
 Step order matters. A restriction or shrinkage step added before
 `add_relativities()` changes the parent coefficient used as the basis for the
 split. A later restriction can instead adjust selected levels of the derived
-`output_variable`.
+`output_variable`. With `restriction_type = "multiplier"`, the parent adjustment
+is included once in the split; the earlier restricted effect is replaced in the
+model offset.
 
 ## Combining and reviewing refinements
 

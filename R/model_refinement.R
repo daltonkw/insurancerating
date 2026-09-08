@@ -4502,6 +4502,13 @@ edit_smoothing <- function(model,
 #' the final split, [rating_table()] reports `output_variable` as the tariff
 #' factor and does not also show the intermediate restricted variable.
 #'
+#' This also applies to `restriction_type = "multiplier"`: a multiplier on a
+#' parent level is included once in the coefficient from which its sublevels
+#' are derived. The split replaces the preceding restricted effect in the
+#' model offset. For example, a parent relativity of 0.80, multiplied by 1.15
+#' and split with an unnormalised sublevel relativity of 0.90, gives
+#' `0.80 * 1.15 * 0.90`.
+#'
 #' Conversely, [add_restriction()] can be called after `add_relativities()` to
 #' adjust selected levels of the derived `output_variable`. The output variable
 #' is then recognised as an existing refinement factor; users do not need to
@@ -5433,6 +5440,24 @@ add_relativities <- function(model,
     effective_model_variable
   )
 
+  # Multiplier coefficients retain their display name, while the active offset
+  # uses an execution column. Replace that offset once its effect is in the split.
+  active_model_term <- effective_model_variable
+  multiplier_columns <- state$restriction_multiplier_columns[[
+    source_model_variable
+  ]] %||% character()
+  active_multipliers <- multiplier_columns[vapply(
+    multiplier_columns,
+    function(column) {
+      !is.null(state$offset) &&
+        grepl(paste0("log(", column, ")"), state$offset, fixed = TRUE)
+    },
+    logical(1)
+  )]
+  if (length(active_multipliers) > 0L) {
+    active_model_term <- utils::tail(active_multipliers, 1L)
+  }
+
   if (!source_model_variable %in% names(df_new)) {
     stop(
       "Source model variable `", source_model_variable,
@@ -5603,7 +5628,7 @@ add_relativities <- function(model,
   restricted_df_new <- unique(restricted_df_new)
   rownames(restricted_df_new) <- NULL
 
-  if (!identical(effective_model_variable, source_model_variable) &&
+  if (!identical(active_model_term, source_model_variable) &&
       !is.null(state$rf_restricted_df)) {
     state$rf_restricted_df <- state$rf_restricted_df[
       state$rf_restricted_df$risk_factor != effective_model_variable,
@@ -5622,7 +5647,7 @@ add_relativities <- function(model,
   }
   rownames(state$rf_restricted_df) <- NULL
 
-  if (identical(effective_model_variable, source_model_variable)) {
+  if (identical(active_model_term, source_model_variable)) {
     fm_replace <- .replace_formula_term(
       formula = state$formula_no_offset,
       old_term = source_model_variable,
@@ -5633,7 +5658,7 @@ add_relativities <- function(model,
     fm_replace <- .replace_refinement_offset(
       formula_no_offset = state$formula_no_offset,
       offset_term = state$offset,
-      old_term = effective_model_variable,
+      old_term = active_model_term,
       new_term = new_rf_name
     )
   }
