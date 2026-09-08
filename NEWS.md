@@ -1,5 +1,10 @@
 # insurancerating (development version)
 
+- `add_restriction()` now supports relative tariff adjustments through
+  `restriction_type = "multiplier"`. Multipliers are stored as ordered
+  refinement decisions and are applied to the relativity available at that
+  point; the default `restriction_type = "fixed"` preserves the existing fixed
+  restriction behaviour.
 - `split_level()` now accepts a named numeric `new_levels` vector, keeping each
   new level next to its relativity. This is the preferred syntax. A character
   `new_levels` vector with a separate `relativities` vector is also fully

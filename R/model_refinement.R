@@ -780,6 +780,7 @@
 .restriction_variable_map <- function(steps) {
   restriction_steps <- Filter(
     function(step) identical(step$type, "restriction") &&
+      identical(step$restriction_type %||% "fixed", "fixed") &&
       is.data.frame(step$restrictions) &&
       ncol(step$restrictions) == 2L,
     steps
@@ -1031,7 +1032,13 @@
       }
     } else if (identical(step$type, "restriction") &&
                identical(step$variable, model_variable)) {
-      model_term <- names(step$restrictions)[2]
+      model_term <- if (identical(
+        step$restriction_type %||% "fixed", "multiplier"
+      )) {
+        step$execution_column
+      } else {
+        names(step$restrictions)[2]
+      }
     } else if (identical(step$type, "shrinkage") &&
                identical(step$model_variable, model_variable)) {
       model_term <- step$derived_model_variable
@@ -1397,7 +1404,10 @@
         (identical(step$type, "shrinkage") &&
            identical(step$model_variable, variable)) ||
         (identical(step$type, "rebasing") &&
-           identical(step$model_variable, variable))
+           identical(step$model_variable, variable)) ||
+        (identical(step$type, "restriction") &&
+           identical(step$restriction_type %||% "fixed", "multiplier") &&
+           identical(step$variable, variable))
     },
     logical(1)
   )]
@@ -1863,6 +1873,7 @@ print.rating_refinement <- function(x, ...) {
     if (is.null(restrictions) || ncol(restrictions) < 2L) {
       return(NA_character_)
     }
+    restriction_type <- step$restriction_type %||% "fixed"
     values <- paste0(
       as.character(restrictions[[1]]), " = ",
       format(as.numeric(restrictions[[2]]), trim = TRUE),
@@ -1871,7 +1882,7 @@ print.rating_refinement <- function(x, ...) {
     if (!is.null(step$replaces)) {
       values <- paste0("replaces ", step$replaces, "; ", values)
     }
-    return(values)
+    return(paste0("type = ", restriction_type, "; ", values))
   }
 
   if (identical(step$type, "smoothing")) {
@@ -2072,11 +2083,160 @@ print.summary.rating_refinement <- function(x, ...) {
 # New add_* functions
 # -----------------------------------------------------------------------------
 
+.add_multiplier_restriction <- function(model, restrictions) {
+  variable <- names(restrictions)[1]
+  value_col <- names(restrictions)[2]
+
+  state <- .make_exec_state(model)
+  if (length(model$steps) > 0L) {
+    for (step in model$steps) {
+      state <- .apply_refinement_step(state, step)
+    }
+  }
+
+  current_model_term <- .refinement_term_for_variable(model$steps, variable)
+  coefficient_variable <- current_model_term
+  current <- .current_refinement_coefficients(state, coefficient_variable)
+  if (is.null(current) || nrow(current) == 0L) {
+    coefficient_variable <- variable
+    current <- .current_refinement_coefficients(state, coefficient_variable)
+  }
+  if (is.null(current) || nrow(current) == 0L) {
+    stop(
+      "Multiplier restriction for `", variable, "` requires an existing ",
+      "relativity at that point in the refinement workflow.",
+      call. = FALSE
+    )
+  }
+  if (!variable %in% names(state$data)) {
+    stop(
+      "Risk factor `", variable, "` is not available in the refinement data ",
+      "at the point where the multiplier would be applied.",
+      call. = FALSE
+    )
+  }
+
+  supplied_levels <- as.character(restrictions[[variable]])
+  current_levels <- as.character(current$level)
+  unknown <- setdiff(supplied_levels, current_levels)
+  if (length(unknown) > 0L) {
+    stop(
+      "Multiplier restriction cannot create new level(s) for `", variable,
+      "`: ", paste(unknown, collapse = ", "),
+      ". Add an underlying relativity before applying a multiplier.",
+      call. = FALSE
+    )
+  }
+
+  multipliers <- rep(1, length(current_levels))
+  multipliers[match(supplied_levels, current_levels)] <-
+    restrictions[[value_col]]
+  completed <- stats::setNames(
+    data.frame(current_levels, multipliers, stringsAsFactors = FALSE),
+    c(variable, value_col)
+  )
+  replace_refinement_offset <- !is.null(state$offset) && grepl(
+    paste0("log(", current_model_term, ")"),
+    state$offset,
+    fixed = TRUE
+  )
+
+  .add_step(model, list(
+    id = .next_step_id(model),
+    type = "restriction",
+    restriction_type = "multiplier",
+    variable = variable,
+    restrictions = completed,
+    supplied_levels = supplied_levels,
+    new_levels = character(),
+    allow_new_levels = FALSE,
+    new_risk_factor = FALSE,
+    allow_new_risk_factors = FALSE,
+    replaces = NULL,
+    execution_column = paste0(
+      ".ir_multiplier_", length(model$steps) + 1L, "_",
+      make.names(variable)
+    ),
+    model_term = current_model_term,
+    coefficient_variable = coefficient_variable,
+    replace_refinement_offset = replace_refinement_offset
+  ))
+}
+
+.normalise_restriction_input <- function(restrictions, model_variable,
+                                         output_variable,
+                                         restriction_type) {
+  if (is.data.frame(restrictions)) {
+    if (!is.null(model_variable) || !is.null(output_variable)) {
+      stop(
+        "With data-frame `restrictions`, risk-factor and output names are ",
+        "taken from its two column names. Do not also supply `model_variable` ",
+        "or `output_variable`.",
+        call. = FALSE
+      )
+    }
+    return(restrictions)
+  }
+
+  if (!is.numeric(restrictions)) {
+    stop(
+      "`restrictions` must be either a two-column data frame or a named ",
+      "numeric vector.",
+      call. = FALSE
+    )
+  }
+  if (!.is_single_string(model_variable)) {
+    stop(
+      "`model_variable` must be supplied as one non-empty character string ",
+      "when `restrictions` is a named numeric vector.",
+      call. = FALSE
+    )
+  }
+  level_names <- names(restrictions)
+  if (is.null(level_names) || anyNA(level_names) || any(!nzchar(level_names))) {
+    stop(
+      "Every value in vector `restrictions` must have a non-empty level name.",
+      call. = FALSE
+    )
+  }
+  if (anyDuplicated(level_names) > 0L) {
+    stop("Vector `restrictions` contains duplicate level names.", call. = FALSE)
+  }
+  if (is.null(output_variable)) {
+    output_variable <- paste0(
+      model_variable,
+      if (identical(restriction_type, "multiplier")) {
+        "_multiplier"
+      } else {
+        "_restricted"
+      }
+    )
+  }
+  if (!.is_single_string(output_variable)) {
+    stop("`output_variable` must be one non-empty character string.",
+         call. = FALSE)
+  }
+  if (identical(output_variable, model_variable)) {
+    stop("`output_variable` must differ from `model_variable`.",
+         call. = FALSE)
+  }
+
+  stats::setNames(
+    data.frame(
+      level_names,
+      unname(restrictions),
+      stringsAsFactors = FALSE
+    ),
+    c(model_variable, output_variable)
+  )
+}
+
 #' Add coefficient restrictions to a refinement workflow
 #'
 #' @description
-#' Fix selected risk-factor levels at user-supplied relativities before the
-#' refined pricing GLM is fitted. This can be appropriate when sampling
+#' Fix selected risk-factor levels at user-supplied relativities or apply
+#' multiplicative adjustments to their current relativities before the refined
+#' pricing GLM is fitted. This can be appropriate when sampling
 #' variation produces an implausible local effect, when an actuarial assumption
 #' is supported by additional information, or when a documented tariff
 #' constraint must be applied consistently.
@@ -2087,14 +2247,28 @@ print.summary.rating_refinement <- function(x, ...) {
 #' evaluated in the recorded step order and applied when [refit()] is called.
 #' Retain the refinement object when reviewing or revising the specification.
 #'
-#' The `restrictions` data frame identifies the risk factor to restrict by its
-#' first column. This may be a variable from the original GLM or a tariff factor
-#' created by an earlier refinement step. The second column contains the
-#' relativities used for those levels in the refined model.
+#' With `restriction_type = "fixed"`, the supplied values become the final
+#' relativities for the selected levels. With `restriction_type = "multiplier"`,
+#' each supplied value multiplies the relativity that exists at that point in
+#' the ordered refinement workflow. The multiplier is retained as a relative
+#' adjustment: it is not converted prematurely into a fixed relativity. A
+#' multiplier of 1 leaves a level unchanged, 1.10 increases it by 10%, and 0.95
+#' decreases it by 5%.
+#'
+#' The preferred input is a named numeric `restrictions` vector together with
+#' `model_variable`. Vector names identify the levels and values contain the
+#' fixed relativities or multipliers. This keeps every level directly beside
+#' its value. `output_variable` names the generated fixed tariff column and has
+#' a deterministic default.
+#'
+#' Alternatively, supply the existing two-column data-frame form. Its first
+#' column name identifies the risk factor and its second column name identifies
+#' the generated tariff column. Both forms are fully supported; the named-vector
+#' form is preferred for concise specifications.
 #'
 #' ## Actuarial interpretation
 #'
-#' The restriction table may contain all levels of the model variable, or only
+#' A fixed restriction table may contain all levels of the model variable, or only
 #' the levels that need a manual adjustment. If only a subset is supplied, the
 #' missing levels are automatically filled with their current effective
 #' relativities at that point in the refinement workflow. These may be the
@@ -2204,16 +2378,36 @@ print.summary.rating_refinement <- function(x, ...) {
 #' restriction added before `add_relativities()` instead changes the coefficient
 #' basis from which the split is derived.
 #'
+#' ## Ordered fixed and multiplier restrictions
+#'
+#' Restriction steps are evaluated in their recorded order. A multiplier after
+#' a fixed restriction scales that fixed relativity. A later fixed restriction
+#' replaces the complete effect at the selected levels and therefore supersedes
+#' earlier multipliers for the same risk factor. For example, fixing a level at
+#' 0.95 and then multiplying by 1.10 gives 1.045; applying those steps in the
+#' opposite order gives 0.95.
+#'
+#' Multipliers require an active underlying relativity. They cannot create a new
+#' risk factor or level, and cannot be combined with `replaces`. Their values
+#' must be finite and strictly positive because they are applied on the log
+#' scale. The stored multiplier remains visible in refinement summaries and
+#' audit metadata.
+#'
 #' @param model Object of class `rating_refinement`, created with
 #'   [prepare_refinement()]. A fitted GLM, including a model returned by
 #'   [refit()], is not accepted directly; retain and modify the corresponding
 #'   refinement specification instead.
-#' @param restrictions Data frame with exactly two columns. The first column
-#'   must have the same name as the risk factor to restrict and contains the
-#'   levels to adjust. This can also be the `output_variable` from an earlier
-#'   [add_relativities()] step. The second column contains the replacement
-#'   relativities. Levels that are not supplied are fixed at their current
-#'   effective relativities.
+#' @param restrictions Preferably a named numeric vector: names identify levels
+#'   and values contain fixed relativities or multipliers. In this form,
+#'   `model_variable` is required. Alternatively, a data frame with exactly two
+#'   columns remains fully supported. Its first column identifies the risk
+#'   factor and contains levels; its second column names the generated tariff
+#'   column and contains values. Unspecified levels are fixed at their current
+#'   values or receive multiplier 1, respectively.
+#' @param restriction_type Character string. `"fixed"` (default) sets selected
+#'   levels to the supplied relativities. `"multiplier"` multiplies the
+#'   relativity present at that point in the refinement workflow by each
+#'   supplied value.
 #' @param allow_new_levels Logical. If `TRUE` (default), `restrictions` may
 #'   contain levels that were not observed in the model data. Their supplied
 #'   relativities are treated as explicit tariff assumptions rather than model
@@ -2232,6 +2426,15 @@ print.summary.rating_refinement <- function(x, ...) {
 #'   a new risk factor; `allow_new_risk_factors = TRUE` is then unnecessary.
 #'   Existing terms used in transformations or interactions cannot be replaced
 #'   through this argument.
+#' @param model_variable `NULL` for the two-column data-frame form, or a
+#'   character string identifying the risk factor when `restrictions` is a
+#'   named numeric vector. This can also identify the `output_variable` from an
+#'   earlier [add_relativities()] step.
+#' @param output_variable Optional name for the generated tariff column when
+#'   using named-vector `restrictions`. Defaults to
+#'   `paste0(model_variable, "_restricted")` for fixed restrictions and
+#'   `paste0(model_variable, "_multiplier")` for multiplier restrictions. With
+#'   data-frame `restrictions`, the second column name fulfils this role.
 #'
 #' @author Martin Haringa
 #'
@@ -2255,18 +2458,34 @@ print.summary.rating_refinement <- function(x, ...) {
 #'   data = portfolio
 #' )
 #'
-#' restrictions <- data.frame(
-#'   postal_area = c("C", "D"),
-#'   relativity = c(1.10, 1.20)
-#' )
-#'
+#' # Preferred form: each level is directly beside its relativity.
 #' refined <- prepare_refinement(model, data = portfolio) |>
-#'   add_restriction(restrictions)
+#'   add_restriction(
+#'     restrictions = c(C = 1.10, D = 1.20),
+#'     model_variable = "postal_area"
+#'   )
 #'
 #' # Postal area D was not observed in the portfolio. Its relativity is an
 #' # explicit tariff assumption and becomes available after refitting.
 #' refined_model <- refit(refined)
 #' rating_table(refined_model, exposure = FALSE)
+#'
+#' # The two-column data-frame form is also fully supported.
+#' restrictions <- data.frame(
+#'   postal_area = c("C", "D"),
+#'   relativity = c(1.10, 1.20)
+#' )
+#' prepare_refinement(model, data = portfolio) |>
+#'   add_restriction(restrictions)
+#'
+#' # Multipliers remain relative to the underlying modelled relativities.
+#' prepare_refinement(model, data = portfolio) |>
+#'   add_restriction(
+#'     restrictions = c(B = 1.10, C = 0.95),
+#'     model_variable = "postal_area",
+#'     restriction_type = "multiplier"
+#'   ) |>
+#'   refit()
 #'
 #' # A factor absent from the fitted GLM can replace an existing model term.
 #' # The portfolio must already assign every observation to a hail zone.
@@ -2302,12 +2521,22 @@ print.summary.rating_refinement <- function(x, ...) {
 #'
 #' @export
 add_restriction <- function(model, restrictions, allow_new_levels = TRUE,
-                            allow_new_risk_factors = FALSE, replaces = NULL) {
+                            allow_new_risk_factors = FALSE, replaces = NULL,
+                            restriction_type = c("fixed", "multiplier"),
+                            model_variable = NULL, output_variable = NULL) {
   allow_new_levels_missing <- missing(allow_new_levels)
   allow_new_risk_factors_missing <- missing(allow_new_risk_factors)
   replaces_missing <- missing(replaces)
+  restriction_type <- match.arg(restriction_type)
 
   .assert_refinement(model)
+
+  restrictions <- .normalise_restriction_input(
+    restrictions = restrictions,
+    model_variable = model_variable,
+    output_variable = output_variable,
+    restriction_type = restriction_type
+  )
 
   if (!is.data.frame(restrictions) || ncol(restrictions) != 2) {
     stop("'restrictions' must be a data.frame with exactly two columns.", call. = FALSE)
@@ -2325,23 +2554,59 @@ add_restriction <- function(model, restrictions, allow_new_levels = TRUE,
   }
   .assert_restriction_relativities(restrictions, value_col)
 
+  if (identical(restriction_type, "multiplier")) {
+    if (any(restrictions[[value_col]] <= 0)) {
+      stop(
+        "Multiplier restrictions must be greater than zero because they are ",
+        "applied on the log scale.",
+        call. = FALSE
+      )
+    }
+    if (!is.null(replaces)) {
+      stop("`replaces` can only be used with `restriction_type = \"fixed\"`.",
+           call. = FALSE)
+    }
+    if (!allow_new_risk_factors_missing && isTRUE(allow_new_risk_factors)) {
+      stop(
+        "A multiplier requires an existing relativity and cannot create a new ",
+        "risk factor. Do not set `allow_new_risk_factors = TRUE`.",
+        call. = FALSE
+      )
+    }
+    if (!allow_new_levels_missing && isTRUE(allow_new_levels)) {
+      allow_new_levels <- FALSE
+    }
+    return(.add_multiplier_restriction(model, restrictions))
+  }
+
   requested_levels <- as.character(restrictions[[variable]])
   updated_restrictions <- list()
   restriction_steps <- which(vapply(
     model$steps,
     function(step) {
       identical(step$type, "restriction") &&
+        identical(step$restriction_type %||% "fixed", "fixed") &&
         identical(step$variable, variable)
     },
     logical(1)
   ))
 
-  if (length(restriction_steps) > 1) {
-    stop(
-      "Multiple restriction steps are stored for risk factor `", variable,
-      "`. Combine these restrictions into one specification before updating it.",
-      call. = FALSE
-    )
+  if (length(restriction_steps) > 0L) {
+    later_multipliers <- which(vapply(
+      model$steps,
+      function(step) {
+        identical(step$type, "restriction") &&
+          identical(step$restriction_type %||% "fixed", "multiplier") &&
+          identical(step$variable %||% NULL, variable)
+      },
+      logical(1)
+    ))
+    latest_fixed <- utils::tail(restriction_steps, 1L)
+    if (any(later_multipliers > latest_fixed)) {
+      restriction_steps <- integer()
+    } else {
+      restriction_steps <- latest_fixed
+    }
   }
 
   existing_step <- if (length(restriction_steps) == 1) {
@@ -2552,6 +2817,7 @@ add_restriction <- function(model, restrictions, allow_new_levels = TRUE,
       existing_step$id
     },
     type = "restriction",
+    restriction_type = "fixed",
     variable = variable,
     restrictions = completed$restrictions,
     supplied_levels = unique(c(
@@ -4440,6 +4706,7 @@ add_relativities <- function(model,
     model_call = ref$base$model_call,
     model_out = ref$base$model,
     restrictions_lst = list(),
+    restriction_multiplier_columns = list(),
     rf_restricted_df = NULL,
     new_rf = NULL,
     new_col_nm = character(),
@@ -4473,10 +4740,25 @@ add_relativities <- function(model,
 # -----------------------------------------------------------------------------
 
 .apply_restriction_step <- function(state, step) {
+  if (identical(step$restriction_type %||% "fixed", "multiplier")) {
+    return(.apply_multiplier_restriction_step(state, step))
+  }
+
   restrictions <- step$restrictions
   variable <- names(restrictions)[1]
   model_term <- step$model_term %||% variable
   restricted_df <- restrict_df(restrictions)
+
+  prior_multiplier_columns <-
+    state$restriction_multiplier_columns[[variable]] %||% character()
+  if (length(prior_multiplier_columns) > 0L) {
+    for (column in prior_multiplier_columns) {
+      if (column %in% names(state$data)) {
+        state$data[[column]] <- 1
+      }
+    }
+    state$restriction_multiplier_columns[[variable]] <- character()
+  }
 
   if (isTRUE(step$new_risk_factor)) {
     formula_no_offset <- state$formula_no_offset
@@ -4573,6 +4855,97 @@ add_relativities <- function(model,
     state$old_col_nm,
     setdiff(names(restrictions), state$new_col_nm)
   )
+
+  state
+}
+
+.apply_multiplier_restriction_step <- function(state, step) {
+  restrictions <- step$restrictions
+  variable <- names(restrictions)[1]
+  execution_column <- step$execution_column %||%
+    paste0(".ir_multiplier_", step$id, "_", make.names(variable))
+
+  coefficient_variable <- step$coefficient_variable %||% variable
+  current <- .current_refinement_coefficients(state, coefficient_variable)
+  if (is.null(current) || nrow(current) == 0L) {
+    stop(
+      "Multiplier restriction for `", variable, "` requires an existing ",
+      "relativity at that point in the refinement workflow.",
+      call. = FALSE
+    )
+  }
+
+  multiplier <- restrictions[[2]][match(
+    as.character(current$level),
+    as.character(restrictions[[1]])
+  )]
+  if (anyNA(multiplier)) {
+    missing_levels <- current$level[is.na(multiplier)]
+    stop(
+      "No multiplier is available for current level(s) of `", variable,
+      "`: ", paste(missing_levels, collapse = ", "),
+      call. = FALSE
+    )
+  }
+
+  effective_values <- as.numeric(current$relativity) * multiplier
+  effective_by_level <- effective_values[match(
+    as.character(restrictions[[1]]),
+    as.character(current$level)
+  )]
+  mapping <- stats::setNames(
+    data.frame(
+      as.character(restrictions[[1]]),
+      effective_by_level,
+      stringsAsFactors = FALSE
+    ),
+    c(variable, execution_column)
+  )
+  state$data <- add_restrictions_df(
+    state$data,
+    mapping,
+    allow_new_levels = FALSE
+  )
+  model_term <- step$model_term %||% variable
+  fm_replace <- if (isTRUE(step$replace_refinement_offset)) {
+    .replace_refinement_offset(
+      formula_no_offset = state$formula_no_offset,
+      offset_term = state$offset,
+      old_term = model_term,
+      new_term = execution_column
+    )
+  } else {
+    .replace_formula_term(
+      formula = state$formula_no_offset,
+      old_term = model_term,
+      new_term = execution_column,
+      offset_term = state$offset
+    )
+  }
+  state$formula <- fm_replace$formula
+  state$formula_no_offset <- fm_replace$formula_no_offset
+  state$offset <- fm_replace$offset
+
+  effective <- data.frame(
+    level = as.character(current$level),
+    yhat = effective_values,
+    risk_factor = coefficient_variable,
+    stringsAsFactors = FALSE
+  )
+  if (!is.null(state$rf_restricted_df)) {
+    state$rf_restricted_df <- state$rf_restricted_df[
+      state$rf_restricted_df$risk_factor != coefficient_variable,
+      ,
+      drop = FALSE
+    ]
+  }
+  state$rf_restricted_df <- rbind(state$rf_restricted_df, effective)
+  state$restrictions_lst[[paste0(variable, "__", step$id)]] <- restrictions
+  state$restriction_multiplier_columns[[variable]] <- c(
+    state$restriction_multiplier_columns[[variable]] %||% character(),
+    execution_column
+  )
+  state$new_col_nm <- .safe_unique_append(state$new_col_nm, execution_column)
 
   state
 }
@@ -5777,8 +6150,14 @@ refit <- function(object, intercept_only = FALSE, ...) {
 .format_refinement_step <- function(step, index) {
   if (identical(step$type, "restriction")) {
     target <- names(step$restrictions)[2]
+    restriction_type <- step$restriction_type %||% "fixed"
     detail <- paste0(
-      "Restriction: ", step$variable, " -> ", target,
+      if (identical(restriction_type, "multiplier")) {
+        "Multiplier restriction: "
+      } else {
+        "Restriction: "
+      },
+      step$variable, " -> ", target,
       " (", nrow(step$restrictions), " levels)"
     )
     if (isTRUE(step$new_risk_factor)) {

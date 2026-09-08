@@ -125,7 +125,7 @@ summary(refinement)
 #> Refinement specification
 #> 
 #> Package: insurancerating 0.8.2.9000
-#> Created: 2026-09-05 09:47:40 CEST
+#> Created: 2026-09-08 12:50:38 CEST
 #> Observations: 6
 #> Family: poisson (log link)
 #> Base formula:
@@ -134,7 +134,7 @@ summary(refinement)
 #> 
 #> Refinement steps: 1
 #>   1. Restriction: risk_class -> risk_class_restricted (2 levels)
-#>      A = 1.00; B = 1.15
+#>      type = fixed; A = 1.00; B = 1.15
 
 fitted_model <- refit(refinement)
 

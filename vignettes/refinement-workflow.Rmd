@@ -483,26 +483,47 @@ interpretation of the proposed smoothing and does not alter the refinement.
 
 ## Restricting selected levels
 
-`add_restriction()` fixes tariff levels at supplied relativities. A restriction
-may represent an implementation rule, a supported external assumption or a
-deliberate response to an unstable local estimate. It differs from smoothing:
-smoothing estimates a structured pattern, whereas a restriction explicitly
-prescribes selected values.
+`add_restriction()` can fix tariff levels at supplied relativities or apply a
+multiplier to their current relativities. A restriction may represent an
+implementation rule, a supported external assumption or a deliberate response
+to an unstable local estimate. It differs from smoothing: smoothing estimates a
+structured pattern, whereas a restriction records an explicit level decision.
 
 ```{r}
-zip_restrictions <- data.frame(
-  zip = c("0", "3"),
-  zip_restricted = c(0.95, 1.10)
-)
-
 refinement <- refinement |>
-  add_restriction(zip_restrictions)
+  add_restriction(
+    restrictions = c("0" = 0.95, "3" = 1.10),
+    model_variable = "zip"
+  )
 ```
 
 Only ZIP levels 0 and 3 are supplied here. The other observed ZIP levels are
 fixed at their current effective relativities. Consequently, a partial
 restriction changes the selected values but still produces a complete fixed
-structure for that risk factor.
+structure for that risk factor. The named-vector form is preferred because each
+level remains directly beside its relativity. A two-column data frame remains a
+fully supported alternative; its column names identify the source factor and
+generated tariff column.
+
+Alternatively, `restriction_type = "multiplier"` retains an adjustment relative
+to the effect that exists at that point in the refinement. Here the current ZIP
+3 relativity is increased by 10%; it is not stored as a prematurely calculated
+fixed value.
+
+```{r}
+prepare_refinement(unrestricted, data = portfolio) |>
+  add_restriction(
+    restrictions = c("3" = 1.10),
+    model_variable = "zip",
+    restriction_type = "multiplier"
+  )
+```
+
+Multipliers require an existing level and cannot introduce a new factor or
+level. Step order is material: a multiplier after a fixed restriction scales
+that fixed value, while a later fixed restriction supersedes earlier
+multipliers for the same factor. Both choices remain explicit in the refinement
+summary and audit trail.
 
 Repeated calls for the same restricted variable update matching levels and
 retain earlier restrictions for levels not supplied again. New levels may be
