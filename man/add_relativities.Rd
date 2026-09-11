@@ -117,6 +117,16 @@ set \code{allow_new_risk_factors = TRUE}. Levels omitted from the restriction
 table are fixed at the relativities calculated by this step.
 }
 
+\subsection{Rating grids and audits}{
+
+After \code{\link[=refit]{refit()}}, \code{\link[=rating_grid]{rating_grid()}} groups by the output factor in place of
+its parent. The numeric split relativity is mapped to the output levels,
+which may have different values within one parent level. Later shrinkage
+and rebasing retain this segment-level grid, including when
+\code{refit(intercept_only = TRUE)} is used. \code{\link[=audit_refinement]{audit_refinement()}} reviews these
+final segments while retaining the original variables for baseline predictions.
+}
+
 \subsection{Appropriate use}{
 
 \code{add_relativities()} is intended for refinement within an already reasonably

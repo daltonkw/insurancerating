@@ -627,6 +627,14 @@ detailed portfolio levels within each parent. `output_variable` names the
 resulting hybrid tariff factor; unsplit parent levels retain their existing
 model effect.
 
+After refitting, `rating_table()` reports this output factor and `rating_grid()`
+uses its segment levels instead of the parent grouping. The numeric split
+relativity is linked to the new segment, since one parent can now contain
+several different relativities. Later shrinkage and rebasing of
+`bm_tariff_segment` retain that grouping, also with `refit(intercept_only = TRUE)`.
+`audit_refinement()` can therefore review the final segments without discarding
+the original variables needed to predict the unrestricted model.
+
 With `normalize = TRUE`, the sublevel relativities are normalised within each
 parent so their exposure-weighted average equals one. The split therefore
 redistributes the parent effect without changing its exposure-weighted level.

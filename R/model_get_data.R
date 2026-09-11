@@ -22,6 +22,10 @@
 #' For a refined model, technical columns used to construct smoothing and
 #' restriction terms are removed from the returned data. The mappings required
 #' to interpret the refined coefficients are retained as attributes.
+#' A factor created by [add_relativities()] replaces its parent in the
+#' default rating-grid grouping. Its numeric relativity columns are mapped to
+#' the new segment levels using the stored refinement specification; the
+#' original portfolio columns remain available for explicit grouping and audits.
 #'
 #' ## Actuarial use
 #'
@@ -35,7 +39,8 @@
 #' @return A `data.frame` of class `"model_data"` with additional attributes:
 #' \itemize{
 #'   \item `response`: response variable in the model;
-#'   \item `rf`: names of risk factors in the model;
+#'   \item `rf`: risk factors used for default rating-grid grouping, including
+#'   the output factors of split refinements;
 #'   \item `offweights`: weight and offset variables if present;
 #'   \item `terms`: model terms object for plain GLMs;
 #'   \item `mgd_rst`, `mgd_smt`: merged restrictions and smooths for refit
@@ -91,7 +96,11 @@ extract_model_data <- function(x) {
     attr(out, "new_nm") <- attr(x, "new_col_nm")
     attr(out, "old_nm") <- attr(x, "old_col_nm")
 
-    rf <- attr(x, "rf")
+    grid_metadata <- .refinement_grid_metadata(
+      attr(x, "rf"), attr(x, "mgd_rst"), attr(x, "refinement_steps"),
+      names(out)
+    )
+    rf <- grid_metadata$rf
     mgd_smt <- attr(x, "mgd_smt")
 
     for (i in seq_along(mgd_smt)) {
@@ -100,7 +109,7 @@ extract_model_data <- function(x) {
     }
 
     attr(out, "rf") <- rf
-    attr(out, "mgd_rst") <- attr(x, "mgd_rst")
+    attr(out, "mgd_rst") <- grid_metadata$mgd_rst
     attr(out, "mgd_smt") <- mgd_smt
     attr(out, "offweights") <- attr(x, "offweights")
   } else {
@@ -266,6 +275,36 @@ model_data <- function(x) {
 }
 
 
+.refinement_grid_metadata <- function(risk_factors, restriction_pairs, steps,
+                                       data_columns) {
+  for (step in steps) {
+    if (!identical(step$type, "relativities")) {
+      next
+    }
+    source <- step$source_model_variable %||% step$model_variable %||%
+      step$risk_factor
+    output <- step$output_variable %||% step$display_risk_factor
+    relativity <- step$derived_model_variable
+    if (!all(vapply(list(source, output, relativity), .is_single_string,
+                    logical(1))) || !output %in% data_columns) {
+      next
+    }
+
+    # A split's numeric effect belongs to its output levels, not the parent
+    # levels. Resolve stored mappings too, including those from earlier fits.
+    risk_factors[risk_factors == source] <- output
+    risk_factors <- unique(c(risk_factors, output))
+    restriction_pairs <- lapply(restriction_pairs, function(pair) {
+      if (length(pair) >= 2L && identical(pair[[2]], relativity)) {
+        pair[[1]] <- output
+      }
+      pair
+    })
+  }
+  list(rf = risk_factors, mgd_rst = restriction_pairs)
+}
+
+
 .rating_grid_add_refinement <- function(out, xdf, refinement_pairs) {
   out <- data.table::as.data.table(out)
   xdf <- data.table::as.data.table(xdf)
@@ -418,8 +457,15 @@ model_data <- function(x) {
 #' of that variable and returned in wide format, for example
 #' `"exposure_2020"` or `"count_2020"`.
 #'
+#' After [add_relativities()] creates an output factor, the default grid uses
+#' that factor instead of its parent. Split relativities and subsequent
+#' shrinkage or rebasing columns are joined by the output segment, not by the
+#' original parent level. Ordinary one-to-one restriction mappings continue
+#' to use their existing grouping variables.
+#'
 #' For objects returned by [extract_model_data()], refinement mappings are joined
-#' by their original factor column. They are not cross-joined onto every row.
+#' by the factor key recorded in the refinement metadata. They are not
+#' cross-joined onto every row.
 #'
 #' Aggregation, reshaping and refinement joins are performed internally with
 #' [data.table::data.table()] to support large pricing portfolios. A local copy

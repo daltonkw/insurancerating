@@ -4515,6 +4515,15 @@ edit_smoothing <- function(model,
 #' set `allow_new_risk_factors = TRUE`. Levels omitted from the restriction
 #' table are fixed at the relativities calculated by this step.
 #'
+#' ## Rating grids and audits
+#'
+#' After [refit()], [rating_grid()] groups by the output factor in place of
+#' its parent. The numeric split relativity is mapped to the output levels,
+#' which may have different values within one parent level. Later shrinkage
+#' and rebasing retain this segment-level grid, including when
+#' `refit(intercept_only = TRUE)` is used. [audit_refinement()] reviews these
+#' final segments while retaining the original variables for baseline predictions.
+#'
 #' ## Appropriate use
 #'
 #' `add_relativities()` is intended for refinement within an already reasonably
@@ -5671,7 +5680,7 @@ add_relativities <- function(model,
   state$restrictions_lst[[new_rf_name]] <- relativities
   state$mgd_rst <- append(
     state$mgd_rst,
-    list(c(source_model_variable, new_rf_name))
+    list(c(output_variable, new_rf_name))
   )
   state$new_col_nm <- .safe_unique_append(state$new_col_nm, c(new_rf_name, display_rf_name))
   state$old_col_nm <- .safe_unique_append(
@@ -5989,8 +5998,14 @@ add_relativities <- function(model,
 
   restriction_map <- NULL
 
-  if (!is.null(x$mgd_rst) && length(x$mgd_rst) > 0) {
-    rst_pairs <- lapply(x$mgd_rst, function(z) {
+  grid_metadata <- .refinement_grid_metadata(
+    rf2, x$mgd_rst, x$refinement_steps, names(refined_data)
+  )
+  rf2 <- grid_metadata$rf
+  mgd_rst <- grid_metadata$mgd_rst
+
+  if (!is.null(mgd_rst) && length(mgd_rst) > 0) {
+    rst_pairs <- lapply(mgd_rst, function(z) {
       z <- unique(as.character(z))
       if (length(z) < 2) {
         return(NULL)
@@ -6015,7 +6030,7 @@ add_relativities <- function(model,
   attr(y, "old_col_nm") <- x$old_col_nm
   attr(y, "rf") <- rf2
   attr(y, "mgd_smt") <- x$mgd_smt
-  attr(y, "mgd_rst") <- x$mgd_rst
+  attr(y, "mgd_rst") <- mgd_rst
   attr(y, "restriction_map") <- restriction_map
   attr(y, "offweights") <- offweights
   attr(y, "continuous_factors") <- rf_single_rows

@@ -1,5 +1,11 @@
 # insurancerating (development version)
 
+- Split factors created by `add_relativities()` now define their own
+  `rating_grid()` grouping, with numeric refinements mapped to the output
+  segments rather than their parent levels. This removes spurious
+  multiple-value warnings in grid-based audits, also after shrinkage,
+  rebasing and intercept-only refitting. Existing saved models with split
+  metadata are resolved on extraction; fitted predictions are unchanged.
 - `add_relativities()` now correctly replaces the active offset from a
   preceding multiplier restriction on the same model variable. The adjusted
   parent effect is included exactly once in the split, preventing spurious

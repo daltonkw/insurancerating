@@ -13,7 +13,8 @@ extract_model_data(x)
 A \code{data.frame} of class \code{"model_data"} with additional attributes:
 \itemize{
 \item \code{response}: response variable in the model;
-\item \code{rf}: names of risk factors in the model;
+\item \code{rf}: risk factors used for default rating-grid grouping, including
+the output factors of split refinements;
 \item \code{offweights}: weight and offset variables if present;
 \item \code{terms}: model terms object for plain GLMs;
 \item \code{mgd_rst}, \code{mgd_smt}: merged restrictions and smooths for refit
@@ -41,6 +42,10 @@ model variables, may therefore not be present.
 For a refined model, technical columns used to construct smoothing and
 restriction terms are removed from the returned data. The mappings required
 to interpret the refined coefficients are retained as attributes.
+A factor created by \code{\link[=add_relativities]{add_relativities()}} replaces its parent in the
+default rating-grid grouping. Its numeric relativity columns are mapped to
+the new segment levels using the stored refinement specification; the
+original portfolio columns remain available for explicit grouping and audits.
 }
 
 \subsection{Actuarial use}{

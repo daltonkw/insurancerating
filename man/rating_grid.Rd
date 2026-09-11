@@ -145,8 +145,15 @@ If \code{exposure_by} is supplied, exposure or row counts are split across level
 of that variable and returned in wide format, for example
 \code{"exposure_2020"} or \code{"count_2020"}.
 
+After \code{\link[=add_relativities]{add_relativities()}} creates an output factor, the default grid uses
+that factor instead of its parent. Split relativities and subsequent
+shrinkage or rebasing columns are joined by the output segment, not by the
+original parent level. Ordinary one-to-one restriction mappings continue
+to use their existing grouping variables.
+
 For objects returned by \code{\link[=extract_model_data]{extract_model_data()}}, refinement mappings are joined
-by their original factor column. They are not cross-joined onto every row.
+by the factor key recorded in the refinement metadata. They are not
+cross-joined onto every row.
 
 Aggregation, reshaping and refinement joins are performed internally with
 \code{\link[data.table:data.table]{data.table::data.table()}} to support large pricing portfolios. A local copy
