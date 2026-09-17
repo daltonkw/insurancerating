@@ -137,6 +137,13 @@ have been used to derive the final split,
 reports `output_variable` as the tariff factor and does not also show
 the intermediate restricted variable.
 
+This also applies to `restriction_type = "multiplier"`: a multiplier on
+a parent level is included once in the coefficient from which its
+sublevels are derived. The split replaces the preceding restricted
+effect in the model offset. For example, a parent relativity of 0.80,
+multiplied by 1.15 and split with an unnormalised sublevel relativity of
+0.90, gives `0.80 * 1.15 * 0.90`.
+
 Conversely,
 [`add_restriction()`](https://mharinga.github.io/insurancerating/reference/add_restriction.md)
 can be called after `add_relativities()` to adjust selected levels of
@@ -144,6 +151,20 @@ the derived `output_variable`. The output variable is then recognised as
 an existing refinement factor; users do not need to set
 `allow_new_risk_factors = TRUE`. Levels omitted from the restriction
 table are fixed at the relativities calculated by this step.
+
+### Rating grids and audits
+
+After
+[`refit()`](https://mharinga.github.io/insurancerating/reference/refit.md),
+[`rating_grid()`](https://mharinga.github.io/insurancerating/reference/rating_grid.md)
+groups by the output factor in place of its parent. The numeric split
+relativity is mapped to the output levels, which may have different
+values within one parent level. Later shrinkage and rebasing retain this
+segment-level grid, including when `refit(intercept_only = TRUE)` is
+used.
+[`audit_refinement()`](https://mharinga.github.io/insurancerating/reference/audit_refinement.md)
+reviews these final segments while retaining the original variables for
+baseline predictions.
 
 ### Appropriate use
 
@@ -209,13 +230,11 @@ model <- glm(
 relativities <- relativities(
   split_level(
     "residential",
-    new_levels = c("flat", "house"),
-    relativities = c(0.95, 1.05)
+    new_levels = c(flat = 0.95, house = 1.05)
   ),
   split_level(
     "commercial",
-    new_levels = c("shop", "office"),
-    relativities = c(1.10, 0.90)
+    new_levels = c(shop = 1.10, office = 0.90)
   )
 )
 

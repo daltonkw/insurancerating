@@ -1,6 +1,38 @@
 # Changelog
 
-## insurancerating 0.8.1.9000 (development version)
+## insurancerating (development version)
+
+- Split factors created by
+  [`add_relativities()`](https://mharinga.github.io/insurancerating/reference/add_relativities.md)
+  now define their own
+  [`rating_grid()`](https://mharinga.github.io/insurancerating/reference/rating_grid.md)
+  grouping, with numeric refinements mapped to the output segments
+  rather than their parent levels. This removes spurious multiple-value
+  warnings in grid-based audits, also after shrinkage, rebasing and
+  intercept-only refitting. Existing saved models with split metadata
+  are resolved on extraction; fitted predictions are unchanged.
+- [`add_relativities()`](https://mharinga.github.io/insurancerating/reference/add_relativities.md)
+  now correctly replaces the active offset from a preceding multiplier
+  restriction on the same model variable. The adjusted parent effect is
+  included exactly once in the split, preventing spurious
+  missing-model-term warnings, double counting in predictions and
+  duplicate intermediate factors in
+  [`rating_table()`](https://mharinga.github.io/insurancerating/reference/rating_table.md).
+- [`add_restriction()`](https://mharinga.github.io/insurancerating/reference/add_restriction.md)
+  now supports relative tariff adjustments through
+  `restriction_type = "multiplier"`. Multipliers are stored as ordered
+  refinement decisions and are applied to the relativity available at
+  that point; the default `restriction_type = "fixed"` preserves the
+  existing fixed restriction behaviour.
+- [`split_level()`](https://mharinga.github.io/insurancerating/reference/relativity_specification.md)
+  now accepts a named numeric `new_levels` vector, keeping each new
+  level next to its relativity. This is the preferred syntax. A
+  character `new_levels` vector with a separate `relativities` vector is
+  also fully supported.
+
+## insurancerating 0.8.2
+
+CRAN release: 2026-09-01
 
 ### Changes since 0.8.1
 

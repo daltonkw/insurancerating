@@ -177,8 +177,8 @@ by an explicit actuarial rationale.
 summary(refinement)
 #> Refinement specification
 #> 
-#> Package: insurancerating 0.8.1.9000
-#> Created: 2026-08-28 13:47:14 UTC
+#> Package: insurancerating 0.8.2.9000
+#> Created: 2026-09-17 13:08:38 UTC
 #> Observations: 30,000
 #> Family: poisson (log link)
 #> Base formula:
@@ -595,27 +595,54 @@ alter the refinement.
 ## Restricting selected levels
 
 [`add_restriction()`](https://mharinga.github.io/insurancerating/reference/add_restriction.md)
-fixes tariff levels at supplied relativities. A restriction may
-represent an implementation rule, a supported external assumption or a
-deliberate response to an unstable local estimate. It differs from
-smoothing: smoothing estimates a structured pattern, whereas a
-restriction explicitly prescribes selected values.
+can fix tariff levels at supplied relativities or apply a multiplier to
+their current relativities. A restriction may represent an
+implementation rule, a supported external assumption or a deliberate
+response to an unstable local estimate. It differs from smoothing:
+smoothing estimates a structured pattern, whereas a restriction records
+an explicit level decision.
 
 ``` r
 
-zip_restrictions <- data.frame(
-  zip = c("0", "3"),
-  zip_restricted = c(0.95, 1.10)
-)
-
 refinement <- refinement |>
-  add_restriction(zip_restrictions)
+  add_restriction(
+    restrictions = c("0" = 0.95, "3" = 1.10),
+    model_variable = "zip"
+  )
 ```
 
 Only ZIP levels 0 and 3 are supplied here. The other observed ZIP levels
 are fixed at their current effective relativities. Consequently, a
 partial restriction changes the selected values but still produces a
-complete fixed structure for that risk factor.
+complete fixed structure for that risk factor. The named-vector form is
+preferred because each level remains directly beside its relativity. A
+two-column data frame remains a fully supported alternative; its column
+names identify the source factor and generated tariff column.
+
+Alternatively, `restriction_type = "multiplier"` retains an adjustment
+relative to the effect that exists at that point in the refinement. Here
+the current ZIP 3 relativity is increased by 10%; it is not stored as a
+prematurely calculated fixed value.
+
+``` r
+
+prepare_refinement(unrestricted, data = portfolio) |>
+  add_restriction(
+    restrictions = c("3" = 1.10),
+    model_variable = "zip",
+    restriction_type = "multiplier"
+  )
+#> <rating_refinement>
+#> Base model: Poisson GLM (log link)
+#> Steps: 1
+#>   1. Multiplier restriction: zip -> zip_multiplier (4 levels)
+```
+
+Multipliers require an existing level and cannot introduce a new factor
+or level. Step order is material: a multiplier after a fixed restriction
+scales that fixed value, while a later fixed restriction supersedes
+earlier multipliers for the same factor. Both choices remain explicit in
+the refinement summary and audit trail.
 
 Repeated calls for the same restricted variable update matching levels
 and retain earlier restrictions for levels not supplied again. New
@@ -639,7 +666,7 @@ removing them is not an unambiguous level restriction.
 autoplot(refinement, variable = "zip")
 ```
 
-![](refinement-workflow_files/figure-html/unnamed-chunk-21-1.png)
+![](refinement-workflow_files/figure-html/unnamed-chunk-22-1.png)
 
 Again, the plot shows the proposed restriction before
 [`refit()`](https://mharinga.github.io/insurancerating/reference/refit.md).
@@ -690,7 +717,7 @@ effects.
 autoplot(refinement, variable = "bm_group")
 ```
 
-![](refinement-workflow_files/figure-html/unnamed-chunk-23-1.png)
+![](refinement-workflow_files/figure-html/unnamed-chunk-24-1.png)
 
 This remains a pre-refit comparison: it shows the current estimated
 effect and the proposed shrunken structure stored in the refinement
@@ -706,20 +733,20 @@ effect while introducing documented differentiation between selected
 sublevels.
 
 The example splits the broad bonus-malus groups `Low` and `Medium` into
-their observed detailed values:
+their observed detailed values. The preferred named-vector form keeps
+each level next to its relativity. The same split can also be supplied
+as character `new_levels` plus a separate numeric `relativities` vector.
 
 ``` r
 
 bm_relativities <- relativities(
   split_level(
     "Low",
-    new_levels = c("1", "2", "3", "4"),
-    relativities = c(0.95, 0.98, 1.02, 1.05)
+    new_levels = c("1" = 0.95, "2" = 0.98, "3" = 1.02, "4" = 1.05)
   ),
   split_level(
     "Medium",
-    new_levels = c("5", "6", "7", "8"),
-    relativities = c(0.96, 0.99, 1.02, 1.05)
+    new_levels = c("5" = 0.96, "6" = 0.99, "7" = 1.02, "8" = 1.05)
   )
 )
 
@@ -739,6 +766,19 @@ identifies the detailed portfolio levels within each parent.
 `output_variable` names the resulting hybrid tariff factor; unsplit
 parent levels retain their existing model effect.
 
+After refitting,
+[`rating_table()`](https://mharinga.github.io/insurancerating/reference/rating_table.md)
+reports this output factor and
+[`rating_grid()`](https://mharinga.github.io/insurancerating/reference/rating_grid.md)
+uses its segment levels instead of the parent grouping. The numeric
+split relativity is linked to the new segment, since one parent can now
+contain several different relativities. Later shrinkage and rebasing of
+`bm_tariff_segment` retain that grouping, also with
+`refit(intercept_only = TRUE)`.
+[`audit_refinement()`](https://mharinga.github.io/insurancerating/reference/audit_refinement.md)
+can therefore review the final segments without discarding the original
+variables needed to predict the unrestricted model.
+
 With `normalize = TRUE`, the sublevel relativities are normalised within
 each parent so their exposure-weighted average equals one. The split
 therefore redistributes the parent effect without changing its
@@ -751,7 +791,7 @@ This operation is not equivalent to restriction or smoothing:
 
 - smoothing regularises an ordered effect already represented by the
   model;
-- restriction fixes selected tariff values;
+- restriction fixes or multiplies selected tariff values;
 - shrinkage reduces differences between categorical levels while
   retaining their ordering;
 - additional relativities introduce finer differentiation inside a
@@ -761,7 +801,9 @@ Step order matters. A restriction or shrinkage step added before
 [`add_relativities()`](https://mharinga.github.io/insurancerating/reference/add_relativities.md)
 changes the parent coefficient used as the basis for the split. A later
 restriction can instead adjust selected levels of the derived
-`output_variable`.
+`output_variable`. With `restriction_type = "multiplier"`, the parent
+adjustment is included once in the split; the earlier restricted effect
+is replaced in the model offset.
 
 ## Combining and reviewing refinements
 
@@ -772,8 +814,8 @@ The four operations now form one ordered specification:
 summary(refinement)
 #> Refinement specification
 #> 
-#> Package: insurancerating 0.8.1.9000
-#> Created: 2026-08-28 13:47:14 UTC
+#> Package: insurancerating 0.8.2.9000
+#> Created: 2026-09-17 13:08:38 UTC
 #> Observations: 30,000
 #> Family: poisson (log link)
 #> Base formula:
@@ -786,7 +828,7 @@ summary(refinement)
 #>   2. Smoothing edit: age_band (relative adjustment: 1.05 from 32 to 65, transition: inherited)
 #>      relative adjustment = 1.05; transition = inherited; cumulative from smoothing step 1
 #>   3. Restriction: zip -> zip_restricted (4 levels)
-#>      0 = 0.9500000; 1 = 0.9954865; 2 = 0.8971513; 3 = 1.1000000
+#>      type = fixed; 0 = 0.9500000; 1 = 0.9954865; 2 = 0.8971513; 3 = 1.1000000
 #>   4. Shrinkage: bm_group (credibility: 0.9, weights: exposure, weighted mean preserved)
 #>      credibility = 0.9; weights = exposure; weighted mean preserved
 #>   5. Relativities: bm_group split by bm_detail -> bm_tariff_segment (normalised: yes)
@@ -938,10 +980,10 @@ refinement_audit <- audit_refinement(
 summary(refinement_audit)
 #> Refinement audit
 #> 
-#> Package: insurancerating 0.8.1.9000
-#> Prepared: 2026-08-28 13:47:14 UTC
-#> Refitted: 2026-08-28 13:47:20 UTC
-#> Audited: 2026-08-28 13:47:20 UTC
+#> Package: insurancerating 0.8.2.9000
+#> Prepared: 2026-09-17 13:08:38 UTC
+#> Refitted: 2026-09-17 13:08:44 UTC
+#> Audited: 2026-09-17 13:08:44 UTC
 #> Measure: frequency (per_exposure)
 #> Exposure: exposure
 #> 
@@ -957,7 +999,7 @@ summary(refinement_audit)
 #>   2. Smoothing edit: age_band (relative adjustment: 1.05 from 32 to 65, transition: inherited)
 #>      relative adjustment = 1.05; transition = inherited; cumulative from smoothing step 1
 #>   3. Restriction: zip -> zip_restricted (4 levels)
-#>      0 = 0.9500000; 1 = 0.9954865; 2 = 0.8971513; 3 = 1.1000000
+#>      type = fixed; 0 = 0.9500000; 1 = 0.9954865; 2 = 0.8971513; 3 = 1.1000000
 #>   4. Shrinkage: bm_group (credibility: 0.9, weights: exposure, weighted mean preserved)
 #>      credibility = 0.9; weights = exposure; weighted mean preserved
 #>   5. Relativities: bm_group split by bm_detail -> bm_tariff_segment (normalised: yes)

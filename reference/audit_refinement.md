@@ -127,8 +127,8 @@ refinement <- prepare_refinement(base_model, data = portfolio) |>
 summary(refinement)
 #> Refinement specification
 #> 
-#> Package: insurancerating 0.8.1.9000
-#> Created: 2026-08-28 13:46:03 UTC
+#> Package: insurancerating 0.8.2.9000
+#> Created: 2026-09-17 13:07:34 UTC
 #> Observations: 6
 #> Family: poisson (log link)
 #> Base formula:
@@ -137,7 +137,7 @@ summary(refinement)
 #> 
 #> Refinement steps: 1
 #>   1. Restriction: risk_class -> risk_class_restricted (2 levels)
-#>      A = 1.00; B = 1.15
+#>      type = fixed; A = 1.00; B = 1.15
 
 refined_model <- refit(refinement)
 audit <- audit_refinement(
@@ -149,10 +149,10 @@ audit <- audit_refinement(
 summary(audit)
 #> Refinement audit
 #> 
-#> Package: insurancerating 0.8.1.9000
-#> Prepared: 2026-08-28 13:46:03 UTC
-#> Refitted: 2026-08-28 13:46:03 UTC
-#> Audited: 2026-08-28 13:46:03 UTC
+#> Package: insurancerating 0.8.2.9000
+#> Prepared: 2026-09-17 13:07:34 UTC
+#> Refitted: 2026-09-17 13:07:34 UTC
+#> Audited: 2026-09-17 13:07:34 UTC
 #> Measure: frequency (per_exposure)
 #> Exposure: exposure
 #> 
@@ -163,7 +163,7 @@ summary(audit)
 #> 
 #> Refinement steps: 1
 #>   1. Restriction: risk_class -> risk_class_restricted (2 levels)
-#>      A = 1.00; B = 1.15
+#>      type = fixed; A = 1.00; B = 1.15
 #> 
 #> Portfolio effect
 #>   Before: 2.16667
